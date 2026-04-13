@@ -113,7 +113,8 @@ jobs:
       - name: Build Docker image
         if: steps.compare.outputs.should_deploy == 'true'
         run: |
-          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/Golla_Nikhil_2022BCS0077:latest"
+          RAW_TAG="${{ secrets.DOCKERHUB_USERNAME }}/Golla_Nikhil_2022BCS0077:latest"
+          IMAGE_TAG="$(echo "$RAW_TAG" | tr '[:upper:]' '[:lower:]')"
           echo "Building image: $IMAGE_TAG | Golla Nikhil | 2022BCS0077"
           docker build -t "$IMAGE_TAG" .
           echo "image_tag=$IMAGE_TAG" >> $GITHUB_ENV
