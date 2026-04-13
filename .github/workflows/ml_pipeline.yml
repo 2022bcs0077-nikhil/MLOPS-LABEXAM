@@ -1,0 +1,142 @@
+name: Train and Deploy ML Model - Golla Nikhil 2022BCS0077
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────
+  # JOB 1: TRAIN
+  # ─────────────────────────────────────────────
+  train:
+    name: Train & Evaluate Model | Golla Nikhil | 2022BCS0077
+    runs-on: ubuntu-latest
+
+    outputs:
+      mse: ${{ steps.extract_mse.outputs.mse }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train model
+        run: |
+          echo "Starting training | Golla Nikhil | 2022BCS0077"
+          python train.py
+
+      - name: Extract MSE from metrics.json
+        id: extract_mse
+        run: |
+          MSE=$(python -c "import json; d=json.load(open('metrics.json')); print(d['mse'])")
+          echo "mse=$MSE" >> $GITHUB_OUTPUT
+          echo "Extracted MSE: $MSE | Golla Nikhil | 2022BCS0077"
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model
+          path: |
+            model.pkl
+            metrics.json
+
+  # ─────────────────────────────────────────────
+  # JOB 2: DEPLOY
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy Docker Image | Golla Nikhil | 2022BCS0077
+    runs-on: ubuntu-latest
+    needs: train          # Only runs if train job succeeds
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download model artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-model
+
+      - name: Compare MSE with stored baseline
+        id: compare
+        env:
+          NEW_MSE: ${{ needs.train.outputs.mse }}
+          BEST_MSE: ${{ vars.BEST_MSE }}
+        run: |
+          echo "New MSE    : $NEW_MSE  | Golla Nikhil | 2022BCS0077"
+          echo "Best MSE   : $BEST_MSE | Golla Nikhil | 2022BCS0077"
+
+          python - <<'EOF'
+          import os, sys
+          new_mse  = float(os.environ["NEW_MSE"])
+          best_mse = float(os.environ["BEST_MSE"])
+          print(f"Comparing new MSE={new_mse:.4f} vs best MSE={best_mse:.4f} | Golla Nikhil | 2022BCS0077")
+          if new_mse < best_mse:
+              print("Model IMPROVED! Proceeding with deployment. | Golla Nikhil | 2022BCS0077")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_deploy=true\n")
+          else:
+              print("Model did NOT improve. Skipping deployment. | Golla Nikhil | 2022BCS0077")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_deploy=false\n")
+          EOF
+
+      # ── SKIP CASE ──────────────────────────────
+      - name: Skip deployment (model did not improve)
+        if: steps.compare.outputs.should_deploy == 'false'
+        run: |
+          echo "========================================================"
+          echo "Model did not improve skipping deployment."
+          echo "Evaluated by Golla Nikhil-2022BCS0077"
+          echo "New MSE : ${{ needs.train.outputs.mse }}"
+          echo "Best MSE: ${{ vars.BEST_MSE }}"
+          echo "========================================================"
+
+      # ── DEPLOY CASE ────────────────────────────
+      - name: Log in to Docker Hub
+        if: steps.compare.outputs.should_deploy == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        if: steps.compare.outputs.should_deploy == 'true'
+        run: |
+          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/Golla_Nikhil_2022BCS0077:latest"
+          echo "Building image: $IMAGE_TAG | Golla Nikhil | 2022BCS0077"
+          docker build -t "$IMAGE_TAG" .
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Push Docker image to Docker Hub
+        if: steps.compare.outputs.should_deploy == 'true'
+        run: |
+          echo "Pushing image: ${{ env.image_tag }} | Golla Nikhil | 2022BCS0077"
+          docker push "${{ env.image_tag }}"
+          echo "Docker push complete! | Golla Nikhil | 2022BCS0077"
+
+      - name: Update BEST_MSE repository variable via GitHub API
+        if: steps.compare.outputs.should_deploy == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_MSE: ${{ needs.train.outputs.mse }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Updating BEST_MSE to $NEW_MSE | Golla Nikhil | 2022BCS0077"
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/actions/variables/BEST_MSE" \
+            -d "{\"name\":\"BEST_MSE\",\"value\":\"$NEW_MSE\"}"
+          echo "BEST_MSE variable updated to: $NEW_MSE | Golla Nikhil | 2022BCS0077"
